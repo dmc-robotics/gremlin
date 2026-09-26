@@ -39,7 +39,8 @@ Native macOS port of Servitor (`~/code/robotics/servitor`, Electron + Vue): a se
 - Standard macOS patterns: toolbar controls, `ContentUnavailableView` for empty states, `.help()` tooltips, sheets for forms, `confirmationDialog` for destructive actions.
 - Settings use `@AppStorage` with keys in `Preferences`.
 - Behavior should match the Electron app unless there's a macOS reason to differ.
-- **No git commits.** The user handles all git operations.
+- **Git:** the user handles all git operations (commits, branches, merges, tags, pushes). Only run git commands that change the repository when explicitly asked.
+- **Commit messages** (only for commits the user asks for): one short line ending with the model name in parentheses, e.g. `Fix port scan timeout (Opus 5.5)`. No Co-Authored-By trailer.
 
 ## Commands
 
@@ -56,7 +57,8 @@ xcodebuild -project MacServitor.xcodeproj -scheme MacServitor -derivedDataPath b
 ## Notes
 
 - Not sandboxed: needs `/dev/cu.*`, arbitrary project folders, and to launch grot. Signed to run locally.
-- grot is found using the PATH from the user's login shell (`ShellEnvironment`), because GUI apps don't inherit it.
+- grot is found using the PATH from the user's login shell (`ShellEnvironment`), because GUI apps don't inherit it. The lookup runs once, off the main thread, on first use; relative PATH entries are dropped so a project folder can never supply its own `grot`. grot runs with `CLICOLOR_FORCE=1` so the output panel keeps its colors.
+- Untrusted input is bounded: serial lines are capped at 4 KB (`LineFramer`), plotter series at 32, the output log at 200 entries. `GrotConfigParser.writePort` only writes `/dev/…` paths and refuses a symlinked `.grotconfig`.
 - Projects are stored in `~/Library/Application Support/MacServitor/projects.json`, in the same schema as the Electron app.
 - Serial ports are opened by callout path (`/dev/cu.*`) with exclusive access. Rates above 230400 use `IOSSIOSPEED`.
 - Pty-based tests can't cover exclusive access, custom baud rates, or DTR reset. Check those on real hardware.
