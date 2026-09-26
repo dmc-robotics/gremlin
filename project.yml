@@ -1,0 +1,67 @@
+# Generate MacServitor.xcodeproj with `xcodegen generate`. Edit this file, not the project.
+name: MacServitor
+
+options:
+  bundleIdPrefix: com.servitor
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Sign to Run Locally
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+packages:
+  ServitorKit:
+    path: ServitorKit
+
+targets:
+  MacServitor:
+    type: application
+    platform: macOS
+    sources:
+      - MacServitor
+    dependencies:
+      - package: ServitorKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.servitor.mac
+        PRODUCT_NAME: MacServitor
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MacServitor
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # Needs /dev/cu.* devices, arbitrary project folders, and to launch grot
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+
+  MacServitorTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - MacServitorTests
+    dependencies:
+      - target: MacServitor
+      - package: ServitorKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.servitor.mac.tests
+
+schemes:
+  MacServitor:
+    build:
+      targets:
+        MacServitor: all
+        MacServitorTests: [test]
+    test:
+      targets:
+        - MacServitorTests
