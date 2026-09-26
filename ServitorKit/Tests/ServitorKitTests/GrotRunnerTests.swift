@@ -16,6 +16,7 @@ struct GrotRunnerTests {
               --version) echo "grot 1.4.2" ;;
               build) echo "building in $(pwd)"; echo "args: $*" ;;
               env) echo "CLICOLOR_FORCE=$CLICOLOR_FORCE" ;;
+              path) echo "$PATH" ;;
               fail) echo "compile error" >&2; exit 3 ;;
               sleep) sleep 10 ;;
             esac
@@ -51,7 +52,31 @@ struct GrotRunnerTests {
         let missing = GrotRunner(executable: "/nonexistent/grot", environment: [:])
         let output = await missing.run(["build"], in: temp.url)
         #expect(output.exitCode != 0)
-        #expect(output.stderr.contains("No such file or directory"))
+        #expect(output.stderr.contains("/nonexistent/grot not found"))
+    }
+
+    @Test func findsGrotOnAbsolutePATHEntries() async throws {
+        let bin = try temp.makeDirectory("bin")
+        try FileManager.default.copyItem(atPath: fakeGrot, toPath: bin + "grot")
+        let runner = GrotRunner(environment: ["PATH": "/usr/bin:\(bin)"])
+        #expect(await runner.version() == "1.4.2")
+    }
+
+    @Test func ignoresRelativePATHEntries() async throws {
+        // A project folder shipping its own bin/grot must not be run
+        let project = try temp.makeDirectory("project")
+        try FileManager.default.createDirectory(atPath: project + "bin", withIntermediateDirectories: true)
+        try FileManager.default.copyItem(atPath: fakeGrot, toPath: project + "bin/grot")
+        let runner = GrotRunner(environment: ["PATH": "bin:.:/usr/bin"])
+        let output = await runner.run(["build"], in: URL(filePath: project))
+        #expect(!output.succeeded)
+        #expect(output.stderr.contains("grot not found"))
+    }
+
+    @Test func passesOnlyAbsolutePATHToGrot() async {
+        let runner = GrotRunner(executable: fakeGrot, environment: ["PATH": "bin:/usr/bin::/bin:."])
+        let output = await runner.run(["path"], in: temp.url)
+        #expect(output.stdout == "/usr/bin:/bin\n")
     }
 
     @Test func timesOut() async {
@@ -65,9 +90,19 @@ struct GrotRunnerTests {
         #expect(await GrotRunner(executable: "/nonexistent/grot", environment: [:]).version() == nil)
     }
 
-    @Test func parsesPATHFromEnvOutput() {
-        let env = "HOME=/Users/x\nPATH=/opt/homebrew/bin:/usr/bin\nSHELL=/bin/zsh\n"
-        #expect(ShellEnvironment.parsePATH(fromEnv: env) == "/opt/homebrew/bin:/usr/bin")
-        #expect(ShellEnvironment.parsePATH(fromEnv: "HOME=/x") == nil)
+    @Test func parsesPATHAfterMarker() {
+        let output = "Welcome to zsh!\nPATH=/wrong\n__MACSERVITOR_PATH__/opt/homebrew/bin:/usr/bin\n"
+        #expect(ShellEnvironment.parsePATH(output) == "/opt/homebrew/bin:/usr/bin")
+        #expect(ShellEnvironment.parsePATH("PATH=/usr/bin") == nil)
+    }
+
+    @Test func absolutePATHDropsRelativeEntries() {
+        #expect(ShellEnvironment.absolutePATH(".:bin::/usr/bin:/opt/homebrew/bin:") == "/usr/bin:/opt/homebrew/bin")
+    }
+
+    @Test func loginShellPATHIsReadable() {
+        // Runs the user's real login shell, as the app does
+        let path = ShellEnvironment.loginShellPATH()
+        #expect(path?.contains("/usr/bin") == true)
     }
 }
