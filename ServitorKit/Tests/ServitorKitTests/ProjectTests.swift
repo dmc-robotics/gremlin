@@ -106,6 +106,23 @@ struct ProjectStoreTests {
         }
     }
 
+    @Test func addNormalizesPathSoDuplicatesAreCaught() throws {
+        let trimmed = String(projectPath.dropLast())  // without the trailing slash
+        let added = try store.add(path: "  \(projectPath)  ", title: "A", description: "")
+        #expect(added.path == trimmed)
+        #expect(throws: ProjectStoreError.duplicatePath) {
+            try store.add(path: trimmed, title: "B", description: "")
+        }
+        #expect(throws: ProjectStoreError.duplicatePath) {
+            try store.add(path: trimmed + "/../blink/", title: "C", description: "")
+        }
+    }
+
+    @Test func normalizedPathExpandsTilde() {
+        #expect(ProjectStore.normalizedPath("~/x/") == NSHomeDirectory() + "/x")
+        #expect(ProjectStore.normalizedPath("/") == "/")
+    }
+
     @Test func updateChangesTitleAndDescription() throws {
         let added = try store.add(path: projectPath, title: "A", description: "")
         let updated = try store.update(id: added.id, title: " B ", description: "desc")
@@ -156,6 +173,36 @@ struct ProjectWatcherTests {
             projects: projects
         )
         #expect(ids == ["b", "f"])
+    }
+
+    @Test func rewatchingReplacesTheStream() async throws {
+        let temp = try TemporaryDirectory()
+        let blink = try temp.makeDirectory("blink")
+        let fade = try temp.makeDirectory("fade")
+        let (changes, continuation) = AsyncStream.makeStream(of: Set<String>.self)
+        let watcher = ProjectWatcher(latency: 0.1) { continuation.yield($0) }
+        watcher.watch([ProjectConfig(id: "b", path: blink, title: "", description: "", addedAt: 0)])
+        watcher.watch([ProjectConfig(id: "f", path: fade, title: "", description: "", addedAt: 0)])
+        defer { watcher.stop() }
+
+        try await Task.sleep(for: .milliseconds(300))
+        try temp.write("", to: "blink/.grotconfig")
+        try temp.write("", to: "fade/.grotconfig")
+
+        #expect(await firstValue(of: changes, timeout: .seconds(5)) == ["f"])
+    }
+
+    @Test func releasingAWatchingWatcherIsSafe() async throws {
+        let temp = try TemporaryDirectory()
+        let path = try temp.makeDirectory("blink")
+        var watcher: ProjectWatcher? = ProjectWatcher(latency: 0.05) { _ in }
+        watcher?.watch([ProjectConfig(id: "b", path: path, title: "", description: "", addedAt: 0)])
+        try temp.write("", to: "blink/.grotconfig")
+        watcher = nil
+        // Events after release must not reach the freed watcher
+        try temp.write("x", to: "blink/.grotconfig")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(watcher == nil)
     }
 
     @Test func canonicalPathResolvesVarSymlink() {

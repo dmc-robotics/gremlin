@@ -13,6 +13,16 @@ public final class ProjectWatcher: Sendable {
         let ref: FSEventStreamRef
     }
 
+    /// The stream's context. The stream retains it, and it holds the watcher weakly, so a
+    /// callback that races with deinit finds nil instead of a freed watcher.
+    private final class Context: Sendable {
+        weak let watcher: ProjectWatcher?
+
+        init(_ watcher: ProjectWatcher) {
+            self.watcher = watcher
+        }
+    }
+
     private struct State {
         var stream: Stream?
         var projects: [ProjectConfig] = []
@@ -36,52 +46,73 @@ public final class ProjectWatcher: Sendable {
 
     /// Replaces the set of watched projects.
     public func watch(_ projects: [ProjectConfig]) {
-        stop()
         let paths = projects.map(\.path).filter { FileManager.default.fileExists(atPath: $0) }
-        guard !paths.isEmpty else { return }
-
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-        let flags = FSEventStreamCreateFlags(
-            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
-        )
-        guard let stream = FSEventStreamCreate(
-            nil,
-            { _, info, count, eventPaths, _, _ in
-                guard let info else { return }
-                let watcher = Unmanaged<ProjectWatcher>.fromOpaque(info).takeUnretainedValue()
-                let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] ?? []
-                watcher.handle(Array(paths.prefix(count)))
-            },
-            &context,
-            paths as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            latency,
-            flags
-        ) else { return }
-
-        FSEventStreamSetDispatchQueue(stream, queue)
-        FSEventStreamStart(stream)
-        state.withLock {
-            $0.stream = Stream(ref: stream)
-            $0.projects = projects
+        let stream = paths.isEmpty ? nil : makeStream(paths: paths)
+        // Swap under the lock so concurrent calls can't leave an extra stream running
+        let previous = state.withLock { state -> Stream? in
+            defer {
+                state.stream = stream
+                state.projects = stream == nil ? [] : projects
+            }
+            return state.stream
         }
+        previous.map(Self.tearDown)
     }
 
     public func stop() {
-        let stream = state.withLock { state -> Stream? in
+        let previous = state.withLock { state -> Stream? in
             defer {
                 state.stream = nil
                 state.projects = []
             }
             return state.stream
         }
-        guard let stream else { return }
+        previous.map(Self.tearDown)
+    }
+
+    private func makeStream(paths: [String]) -> Stream? {
+        let context = Context(self)
+        var streamContext = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(context).toOpaque(),
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<Context>.fromOpaque(info).retain()
+                return info
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<Context>.fromOpaque(info).release()
+            },
+            copyDescription: nil
+        )
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+        )
+        let stream = withExtendedLifetime(context) {
+            FSEventStreamCreate(
+                nil,
+                { _, info, count, eventPaths, _, _ in
+                    guard let info else { return }
+                    let context = Unmanaged<Context>.fromOpaque(info).takeUnretainedValue()
+                    let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] ?? []
+                    context.watcher?.handle(Array(paths.prefix(count)))
+                },
+                &streamContext,
+                paths as CFArray,
+                FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                latency,
+                flags
+            )
+        }
+        guard let stream else { return nil }
+
+        FSEventStreamSetDispatchQueue(stream, queue)
+        FSEventStreamStart(stream)
+        return Stream(ref: stream)
+    }
+
+    private static func tearDown(_ stream: Stream) {
         FSEventStreamStop(stream.ref)
         FSEventStreamInvalidate(stream.ref)
         FSEventStreamRelease(stream.ref)

@@ -43,14 +43,15 @@ public struct ProjectStore: Sendable {
     }
 
     @discardableResult
-    public func add(path: String, title: String, description: String, now: Date = .now) throws -> ProjectConfig {
+    public func add(path rawPath: String, title: String, description: String, now: Date = .now) throws -> ProjectConfig {
+        let path = Self.normalizedPath(rawPath)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw ProjectStoreError.directoryNotFound
         }
 
         var projects = try load()
-        guard !projects.contains(where: { $0.path == path }) else {
+        guard !projects.contains(where: { Self.normalizedPath($0.path) == path }) else {
             throw ProjectStoreError.duplicatePath
         }
 
@@ -85,6 +86,14 @@ public struct ProjectStore: Sendable {
         }
         projects.remove(at: index)
         try save(projects)
+    }
+
+    /// Trims whitespace, expands `~`, resolves `.`/`..` and drops a trailing slash, so the
+    /// same folder picked in a dialog or typed by hand compares equal.
+    static func normalizedPath(_ path: String) -> String {
+        let expanded = (path.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+        let standardized = URL(filePath: expanded).standardizedFileURL.path(percentEncoded: false)
+        return standardized.count > 1 && standardized.hasSuffix("/") ? String(standardized.dropLast()) : standardized
     }
 
     private func save(_ projects: [ProjectConfig]) throws {

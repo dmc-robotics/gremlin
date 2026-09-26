@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ServitorKit
 
@@ -42,6 +43,49 @@ struct GrotConfigParserTests {
             fqbn = "real:value"
             """)
         #expect(config.fqbn == "real:value")
+    }
+
+    @Test func nonPositiveBaudUsesDefault() {
+        #expect(GrotConfigParser.parse("baud_rate = 0").baudRate == GrotConfigParser.defaultBaudRate)
+    }
+
+    @Test func emptyValueDoesNotReachNextLine() {
+        let config = GrotConfigParser.parse("port =\nfqbn = \"arduino:avr:uno\"")
+        #expect(config.port.isEmpty)
+        #expect(config.fqbn == "arduino:avr:uno")
+    }
+
+    @Test func emptyPortIsAppendedNotMerged() {
+        let result = GrotConfigParser.updatingPort(in: "port =\nfqbn = \"x\"", to: "/dev/cu.a")
+        #expect(result == "port =\nfqbn = \"x\"\nport = \"/dev/cu.a\"\n")
+    }
+
+    @Test func writePortUpdatesFile() throws {
+        let temp = try TemporaryDirectory()
+        try temp.write("port = \"/dev/old\"", to: ".grotconfig")
+        let url = temp.url.appending(path: ".grotconfig")
+        try GrotConfigParser.writePort("/dev/cu.usbmodem1101", toConfigAt: url)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "port = \"/dev/cu.usbmodem1101\"")
+    }
+
+    @Test(arguments: ["/dev/cu.x\"\nport = \"evil", "/dev/x; rm", "cu.usbmodem1", "/dev/../etc/passwd"])
+    func writePortRejectsNonDevicePaths(port: String) throws {
+        let temp = try TemporaryDirectory()
+        try temp.write("port = \"/dev/old\"", to: ".grotconfig")
+        #expect(throws: GrotConfigError.invalidPort(port)) {
+            try GrotConfigParser.writePort(port, toConfigAt: temp.url.appending(path: ".grotconfig"))
+        }
+    }
+
+    @Test func writePortRefusesSymlink() throws {
+        let temp = try TemporaryDirectory()
+        try temp.write("secret = \"x\"", to: "elsewhere.toml")
+        let link = temp.url.appending(path: ".grotconfig")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: temp.url.appending(path: "elsewhere.toml"))
+        #expect(throws: GrotConfigError.symbolicLink) {
+            try GrotConfigParser.writePort("/dev/cu.a", toConfigAt: link)
+        }
+        #expect(try String(contentsOf: temp.url.appending(path: "elsewhere.toml"), encoding: .utf8) == "secret = \"x\"")
     }
 
     @Test func detectsTeensy() {
