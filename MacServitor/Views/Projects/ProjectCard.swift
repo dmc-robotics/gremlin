@@ -169,7 +169,7 @@ struct ProjectCard: View {
         } else {
             let port = project.grotConfig?.port ?? ""
             let state: StatusBadge.State = !port.isEmpty && project.portAvailable ? .ok : .fail
-            let help = if let error = model.portScanErrors[project.id] {
+            let help = if state == .fail, let error = model.portScanErrors[project.id] {
                 error
             } else if port.isEmpty {
                 "No port configured. Click to scan for your Arduino."
@@ -181,7 +181,8 @@ struct ProjectCard: View {
             StatusBadge(title: "Port", state: state, help: help, isRunning: operations.updatingPort) {
                 Task { await model.updatePort(id: project.id) }
             }
-            .disabled(operations.updatingPort)
+            // Building and loading read .grotconfig, so don't rewrite it meanwhile
+            .disabled(operations.isBusy)
         }
     }
 

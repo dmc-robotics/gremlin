@@ -10,7 +10,19 @@ final class FakeGrot: GrotRunning {
         let directory: URL
     }
 
-    private let state = Mutex<(calls: [Call], results: [String: CommandOutput])>(([], [:]))
+    private struct Scripted {
+        let output: CommandOutput
+        let delay: Duration
+    }
+
+    private struct State {
+        var calls: [Call] = []
+        var results: [String: CommandOutput] = [:]
+        /// One-off results, used in order before `results`
+        var queued: [String: [Scripted]] = [:]
+    }
+
+    private let state = Mutex(State())
 
     var calls: [Call] { state.withLock { $0.calls } }
 
@@ -18,15 +30,30 @@ final class FakeGrot: GrotRunning {
         state.withLock { $0.results[command] = output }
     }
 
+    /// The next call of `command` waits `delay`, then returns `output`
+    func enqueue(_ output: CommandOutput, after delay: Duration, for command: String) {
+        state.withLock { $0.queued[command, default: []].append(Scripted(output: output, delay: delay)) }
+    }
+
     func commands() -> [String] {
         calls.compactMap(\.arguments.first)
     }
 
     func run(_ arguments: [String], in directory: URL) async -> CommandOutput {
-        state.withLock { state in
+        let command = arguments.first ?? ""
+        let scripted = state.withLock { state -> Scripted in
             state.calls.append(Call(arguments: arguments, directory: directory))
-            return state.results[arguments.first ?? ""] ?? CommandOutput(exitCode: 0)
+            if var queue = state.queued[command], !queue.isEmpty {
+                let next = queue.removeFirst()
+                state.queued[command] = queue
+                return next
+            }
+            return Scripted(output: state.results[command] ?? CommandOutput(exitCode: 0), delay: .zero)
         }
+        if scripted.delay > .zero {
+            try? await Task.sleep(for: scripted.delay)
+        }
+        return scripted.output
     }
 
     func version() async -> String? { "1.0.0" }

@@ -27,9 +27,34 @@ enum Layout {
     static let outputMinHeight: CGFloat = 90
     static let outputIdealHeight: CGFloat = 200
     static let settingsWidth: CGFloat = 480
+    static let formSheetWidth: CGFloat = 460
+    static let splitHandleHeight: CGFloat = 6
+    static let appIconSize: CGFloat = 16
+    static let connectionDotSize: CGFloat = 10
+    static let helpPopoverWidth: CGFloat = 440
+    static let helpPopoverHeight: CGFloat = 520
+}
+
+enum OutputLog {
+    /// Older entries are dropped beyond this
+    static let maxEntries = 200
+    /// Longer stdout/stderr keeps only its end
+    static let maxCharactersPerStream = 100_000
 }
 
 extension Date {
+    /// `2026-09-26-142233` in local time, for file names.
+    var fileNameTimestamp: String {
+        formatted(Date.VerbatimFormatStyle(
+            format: """
+                \(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits)-\
+                \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased))\(minute: .twoDigits)\(second: .twoDigits)
+                """,
+            timeZone: .current,
+            calendar: .current
+        ))
+    }
+
     /// `14:03:22.123`, used for serial and output timestamps.
     var timeWithMilliseconds: String {
         formatted(Date.VerbatimFormatStyle(

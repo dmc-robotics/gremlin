@@ -35,7 +35,7 @@ struct ANSITextTests {
     }
 
     @Test func stripsNonSGRSequences() {
-        #expect(ANSIText.parse("\u{1B}[?25l\u{1B}[2Kdone\u{1B}[1G").map(\.text) == ["done"])
+        #expect(ANSIText.parse("\u{1B}[?25l\u{1B}[2Kdone\u{1B}[1G\u{1B}[1M").map(\.text) == ["done"])
     }
 
     @Test func carriageReturnsBecomeNewlinesAndBlankRunsCollapse() {

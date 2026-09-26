@@ -39,7 +39,7 @@ public struct ANSISegment: Hashable, Sendable {
 public enum ANSIText {
     // Computed because Regex isn't Sendable; literals are compiled at build time, so this is cheap.
     private static var sgr: Regex<(Substring, Substring)> { /\u{1B}\[([\d;]*)m/ }
-    private static var nonSGR: Regex<Substring> { /\u{1B}\[[\d;?]*[A-LN-Za-ln-z]/ }
+    private static var nonSGR: Regex<Substring> { /\u{1B}\[[\d;?]*[A-Za-ln-z]/ }
     private static var anyEscape: Regex<Substring> { /\u{1B}\[[\d;?]*[A-Za-z]/ }
 
     public static func parse(_ text: String) -> [ANSISegment] {

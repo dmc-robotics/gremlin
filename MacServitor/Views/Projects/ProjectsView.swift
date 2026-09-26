@@ -21,6 +21,13 @@ struct ProjectsView: View {
         .navigationTitle("Projects")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Button("Refresh", systemImage: "arrow.clockwise") {
+                    Task { await model.loadProjects() }
+                }
+                .disabled(model.isLoading)
+                .help("Reload projects and check which ports are connected")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button("Add Project", systemImage: "plus") { isAdding = true }
                     .help("Add an Arduino project directory")
             }
@@ -32,7 +39,7 @@ struct ProjectsView: View {
             ProjectFormSheet(mode: .edit(project))
         }
         .task {
-            await model.loadProjects()
+            await model.loadProjectsIfNeeded()
         }
     }
 

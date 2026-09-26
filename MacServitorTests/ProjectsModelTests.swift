@@ -73,9 +73,10 @@ struct ProjectsModelTests {
 
     @Test func addUpdateAndRemove() async throws {
         let path = try workspace.makeProject("blink", grotConfig: Self.unoConfig)
-        try await model.addProject(path: path, title: "Blink", description: "")
+        try model.addProject(path: path, title: "Blink", description: "")
         let id = try #require(model.projects.first?.id)
-        #expect(model.configValidation[id] == true)
+        // Validation runs in the background after adding
+        #expect(await waitUntil { model.configValidation[id] == true })
 
         try model.updateProject(id: id, title: "Blinky", description: "LED")
         #expect(model.projects[0].config.title == "Blinky")
@@ -89,10 +90,57 @@ struct ProjectsModelTests {
 
     @Test func addRejectsDuplicates() async throws {
         let path = try workspace.makeProject("blink")
-        try await model.addProject(path: path, title: "A", description: "")
-        await #expect(throws: ProjectStoreError.duplicatePath) {
-            try await model.addProject(path: path, title: "B", description: "")
+        try model.addProject(path: path, title: "A", description: "")
+        #expect(throws: ProjectStoreError.duplicatePath) {
+            try model.addProject(path: path + "/", title: "B", description: "")
         }
+    }
+
+    @Test func loadsOnlyOnceUntilRefreshed() async throws {
+        try await addProject("blink")
+        #expect(grot.commands() == ["validate"])
+        await model.loadProjectsIfNeeded()
+        #expect(grot.commands() == ["validate"])
+        await model.loadProjects()
+        #expect(grot.commands() == ["validate", "validate"])
+    }
+
+    @Test func newestValidationWins() async throws {
+        let id = try await addProject("blink")
+        // The first (slow) run sees a broken config; the second (fast) sees it fixed
+        grot.enqueue(.failure("missing fqbn"), after: .milliseconds(300), for: "validate")
+        grot.enqueue(CommandOutput(exitCode: 0), after: .zero, for: "validate")
+
+        async let first: Void = model.validateConfig(id: id)
+        try await Task.sleep(for: .milliseconds(50))
+        await model.validateConfig(id: id)
+        await first
+
+        #expect(model.configValidation[id] == true)
+        #expect(!model.outputLog.contains { $0.command == "validate" })
+    }
+
+    @Test func removingDuringValidationLeavesNoState() async throws {
+        let id = try await addProject("blink")
+        grot.enqueue(.failure("bad"), after: .milliseconds(200), for: "validate")
+        async let validation: Void = model.validateConfig(id: id)
+        try await Task.sleep(for: .milliseconds(50))
+        try model.removeProject(id: id)
+        await validation
+
+        #expect(model.configValidation[id] == nil)
+        #expect(model.outputLog.isEmpty)
+    }
+
+    @Test func removingDuringBuildLeavesNoOperationState() async throws {
+        let id = try await addProject("blink")
+        grot.enqueue(CommandOutput(exitCode: 0), after: .milliseconds(200), for: "build")
+        async let build: Void = model.buildProject(id: id)
+        try await Task.sleep(for: .milliseconds(50))
+        try model.removeProject(id: id)
+        await build
+
+        #expect(model.operations[id] == nil)
     }
 
     // MARK: Operations
@@ -178,6 +226,33 @@ struct ProjectsModelTests {
         #expect(!model.operations(for: id).updatingPort)
     }
 
+    @Test func updatePortIsIgnoredWhileLoading() async throws {
+        let id = try await addProject("blink", grotConfig: "fqbn = \"arduino:avr:uno\"\nport = \"/dev/cu.usbmodem1\"")
+        ports.set(["/dev/cu.usbmodem1", "/dev/cu.usbmodem9"])
+        grot.enqueue(CommandOutput(exitCode: 0), after: .milliseconds(200), for: "load")
+        async let load: Void = model.loadToBoard(id: id)
+        try await Task.sleep(for: .milliseconds(50))
+
+        await model.updatePort(id: id)
+        await load
+
+        #expect(try workspace.grotConfig(of: "blink").contains("/dev/cu.usbmodem1\""))
+        #expect(!model.outputLog.contains { $0.command == "update-port" })
+    }
+
+    @Test func updatePortRefusesSymlinkedConfig() async throws {
+        let id = try await addProject("blink")
+        let config = workspace.root.appending(path: "blink/.grotconfig")
+        let elsewhere = workspace.root.appending(path: "elsewhere.toml")
+        try FileManager.default.moveItem(at: config, to: elsewhere)
+        try FileManager.default.createSymbolicLink(at: config, withDestinationURL: elsewhere)
+
+        await model.updatePort(id: id)
+
+        #expect(model.portScanErrors[id]?.contains("symbolic link") == true)
+        #expect(try String(contentsOf: elsewhere, encoding: .utf8) == Self.unoConfig)
+    }
+
     @Test func updatePortWithoutArduinoReportsError() async throws {
         let id = try await addProject("blink")
         ports.set(["/dev/cu.Bluetooth-Incoming-Port"])
@@ -212,6 +287,19 @@ struct ProjectsModelTests {
         #expect(model.configValidation[id] == nil)
     }
 
+    @Test func portErrorClearsWhenPortReturns() async throws {
+        let id = try await addProject("blink")
+        ports.set([])
+        await model.loadToBoard(id: id)
+        #expect(model.portScanErrors[id] != nil)
+
+        ports.set(["/dev/cu.usbmodem1"])
+        await model.projectFilesChanged(id: id)
+
+        #expect(model.projects[0].portAvailable)
+        #expect(model.portScanErrors[id] == nil)
+    }
+
     @Test func fileChangeForUnknownProjectIsIgnored() async {
         await model.projectFilesChanged(id: "nope")
         #expect(model.projects.isEmpty)
@@ -227,5 +315,21 @@ struct ProjectsModelTests {
 
         model.clearOutput()
         #expect(model.outputLog.isEmpty)
+    }
+
+    @Test func outputLogKeepsRecentEntries() {
+        for i in 0..<(OutputLog.maxEntries + 5) {
+            model.appendOutput(projectTitle: "P\(i)", command: "build", output: CommandOutput(exitCode: 0))
+        }
+        #expect(model.outputLog.count == OutputLog.maxEntries)
+        #expect(model.outputLog.first?.projectTitle == "P5")
+    }
+
+    @Test func longOutputKeepsItsEnd() {
+        let long = String(repeating: "x", count: OutputLog.maxCharactersPerStream) + "the error"
+        model.appendOutput(projectTitle: "P", command: "build", output: .failure(long))
+        let stderr = model.outputLog[0].output.stderr
+        #expect(stderr.hasSuffix("the error"))
+        #expect(stderr.count < long.count + 40)
     }
 }

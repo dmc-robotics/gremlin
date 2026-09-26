@@ -80,7 +80,7 @@ struct ProjectFormSheet: View {
             }
             .padding([.horizontal, .bottom])
         }
-        .frame(width: 460)
+        .frame(width: Layout.formSheetWidth)
         .fileImporter(isPresented: $isChoosingDirectory, allowedContentTypes: [.folder]) { result in
             guard case let .success(url) = result else { return }
             path = url.path(percentEncoded: false)
@@ -103,7 +103,7 @@ struct ProjectFormSheet: View {
             do {
                 switch mode {
                 case .add:
-                    try await model.addProject(path: path, title: title, description: description)
+                    try model.addProject(path: path, title: title, description: description)
                 case let .edit(project):
                     try model.updateProject(id: project.id, title: title, description: description)
                 }

@@ -11,13 +11,36 @@ struct ProjectOperations: Equatable {
     var isBusy: Bool { building || loading || updatingPort }
 }
 
-/// One command's result in the output panel.
+/// One command's result in the output panel. The colored text is prepared once here
+/// rather than on every redraw.
 struct OutputEntry: Identifiable, Equatable {
     let id: Int
     let projectTitle: String
     let command: String
     let output: CommandOutput
     let timestamp: Date
+    let stdoutText: AttributedString
+    let stderrText: AttributedString
+
+    init(id: Int, projectTitle: String, command: String, output: CommandOutput, timestamp: Date) {
+        self.id = id
+        self.projectTitle = projectTitle
+        self.command = command
+        self.output = CommandOutput(
+            exitCode: output.exitCode,
+            stdout: Self.limited(output.stdout),
+            stderr: Self.limited(output.stderr)
+        )
+        self.timestamp = timestamp
+        stdoutText = ANSIText.attributedString(self.output.stdout)
+        stderrText = ANSIText.attributedString(self.output.stderr)
+    }
+
+    /// Keeps the end of very long output, where errors usually are
+    private static func limited(_ text: String) -> String {
+        guard text.count > OutputLog.maxCharactersPerStream else { return text }
+        return "… earlier output omitted …\n" + text.suffix(OutputLog.maxCharactersPerStream)
+    }
 }
 
 /// State and actions for the Projects page. Port of servitor's `stores/dashboard.ts`.
@@ -38,7 +61,10 @@ final class ProjectsModel {
     /// so the Serial page defaults to it.
     @ObservationIgnored var onProjectLoaded: ((Int) -> Void)?
 
+    @ObservationIgnored private var hasLoaded = false
     @ObservationIgnored private var nextLogID = 1
+    /// Bumped per project for each validation, so only the newest result is kept
+    @ObservationIgnored private var validationGeneration: [String: Int] = [:]
     @ObservationIgnored private let store: ProjectStore
     @ObservationIgnored private let grot: any GrotRunning
     @ObservationIgnored private let ports: any SerialPortListing
@@ -69,8 +95,15 @@ final class ProjectsModel {
 
     // MARK: - Project list
 
-    /// Reloads projects from disk, then validates their configs.
+    /// Loads projects the first time the Projects page appears; file changes keep them current after that.
+    func loadProjectsIfNeeded() async {
+        guard !hasLoaded else { return }
+        await loadProjects()
+    }
+
+    /// Reloads projects from disk (e.g. after plugging in a board), then validates their configs.
     func loadProjects() async {
+        hasLoaded = true
         isLoading = true
         do {
             let available = availablePortPaths()
@@ -85,11 +118,12 @@ final class ProjectsModel {
         await validateAllConfigs()
     }
 
-    func addProject(path: String, title: String, description: String) async throws {
+    /// Adds the project and starts validating its config in the background.
+    func addProject(path: String, title: String, description: String) throws {
         let config = try store.add(path: path, title: title, description: description)
         projects.append(ProjectInspector.inspect(config, availablePorts: availablePortPaths()))
         restartWatcher()
-        await validateConfig(id: config.id)
+        Task { await validateConfig(id: config.id) }
     }
 
     func updateProject(id: String, title: String, description: String) throws {
@@ -104,6 +138,7 @@ final class ProjectsModel {
         operations[id] = nil
         portScanErrors[id] = nil
         configValidation[id] = nil
+        validationGeneration[id] = nil
         restartWatcher()
     }
 
@@ -113,6 +148,9 @@ final class ProjectsModel {
         let hadConfig = projects[index].hasGrotConfig
         let data = ProjectInspector.inspect(projects[index].config, availablePorts: availablePortPaths())
         projects[index] = data
+        if data.portAvailable {
+            portScanErrors[id] = nil
+        }
 
         if data.hasGrotConfig {
             await validateConfig(id: id)
@@ -128,7 +166,13 @@ final class ProjectsModel {
             configValidation[id] = nil
             return
         }
+        let generation = validationGeneration[id, default: 0] + 1
+        validationGeneration[id] = generation
+
         let output = await runGrot("validate", for: project.config)
+        // A newer validation started meanwhile, or the project was removed
+        guard validationGeneration[id] == generation else { return }
+
         configValidation[id] = output.succeeded
         if !output.succeeded {
             appendOutput(projectTitle: project.config.title, command: "validate", output: output)
@@ -145,8 +189,8 @@ final class ProjectsModel {
 
     func buildProject(id: String) async {
         guard let project = project(id) else { return }
-        operations[id, default: ProjectOperations()].building = true
-        defer { operations[id, default: ProjectOperations()].building = false }
+        setOperation(\.building, true, for: id)
+        defer { setOperation(\.building, false, for: id) }
 
         let output = await runGrot("build", for: project.config)
         appendOutput(projectTitle: project.config.title, command: "build", output: output)
@@ -154,8 +198,8 @@ final class ProjectsModel {
 
     func loadToBoard(id: String) async {
         guard let project = project(id) else { return }
-        operations[id, default: ProjectOperations()].loading = true
-        defer { operations[id, default: ProjectOperations()].loading = false }
+        setOperation(\.loading, true, for: id)
+        defer { setOperation(\.loading, false, for: id) }
 
         // Teensy boards are loaded without a serial port
         if project.grotConfig?.isTeensy != true, let problem = portProblem(for: project.config) {
@@ -172,20 +216,18 @@ final class ProjectsModel {
     }
 
     /// Finds the most likely Arduino port and writes it to the project's `.grotconfig`.
+    /// Not while building or loading, which read that file.
     func updatePort(id: String) async {
-        guard let project = project(id) else { return }
-        operations[id, default: ProjectOperations()].updatingPort = true
-        defer { operations[id, default: ProjectOperations()].updatingPort = false }
+        guard let project = project(id), !operations(for: id).isBusy else { return }
+        setOperation(\.updatingPort, true, for: id)
+        defer { setOperation(\.updatingPort, false, for: id) }
 
         let title = project.config.title
         do {
             guard let port = ports.availablePorts().first(where: \.isLikelyArduino)?.path else {
                 throw PortScanError.noArduinoFound
             }
-            let configURL = ProjectInspector.grotConfigURL(for: project.config)
-            let content = try String(contentsOf: configURL, encoding: .utf8)
-            try GrotConfigParser.updatingPort(in: content, to: port)
-                .write(to: configURL, atomically: true, encoding: .utf8)
+            try GrotConfigParser.writePort(port, toConfigAt: ProjectInspector.grotConfigURL(for: project.config))
 
             if let index = index(of: id) {
                 projects[index].grotConfig?.port = port
@@ -201,6 +243,7 @@ final class ProjectsModel {
 
     // MARK: - Output log
 
+    /// Keeps the most recent `OutputLog.maxEntries` entries.
     func appendOutput(projectTitle: String, command: String, output: CommandOutput) {
         outputLog.append(OutputEntry(
             id: nextLogID,
@@ -210,6 +253,9 @@ final class ProjectsModel {
             timestamp: .now
         ))
         nextLogID += 1
+        if outputLog.count > OutputLog.maxEntries {
+            outputLog.removeFirst(outputLog.count - OutputLog.maxEntries)
+        }
     }
 
     func clearOutput() {
@@ -232,6 +278,12 @@ final class ProjectsModel {
 
     private func index(of id: String) -> Int? {
         projects.firstIndex { $0.id == id }
+    }
+
+    /// Records an operation's state, unless the project was removed while it ran
+    private func setOperation(_ keyPath: WritableKeyPath<ProjectOperations, Bool>, _ value: Bool, for id: String) {
+        guard index(of: id) != nil else { return }
+        operations[id, default: ProjectOperations()][keyPath: keyPath] = value
     }
 
     private func availablePortPaths() -> Set<String> {
@@ -260,9 +312,8 @@ final class ProjectsModel {
     }
 
     private func markPortUnavailable(id: String, reason: String) {
-        if let index = index(of: id) {
-            projects[index].portAvailable = false
-        }
+        guard let index = index(of: id) else { return }
+        projects[index].portAvailable = false
         portScanErrors[id] = reason
     }
 

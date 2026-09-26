@@ -101,11 +101,11 @@ private struct OutputEntryView: View {
             .font(.caption)
 
             if !entry.output.stdout.isEmpty {
-                OutputText(text: entry.output.stdout, baseColor: .primary)
+                OutputText(text: entry.stdoutText, baseColor: .primary)
                     .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
             }
             if !entry.output.stderr.isEmpty {
-                OutputText(text: entry.output.stderr, baseColor: .red)
+                OutputText(text: entry.stderrText, baseColor: .red)
                     .background(.red.opacity(0.08), in: .rect(cornerRadius: 6))
             }
         }
@@ -118,11 +118,11 @@ private struct OutputEntryView: View {
 
 /// Monospaced command output with grot's ANSI colors.
 private struct OutputText: View {
-    let text: String
+    let text: AttributedString
     let baseColor: Color
 
     var body: some View {
-        Text(ANSIText.attributedString(text))
+        Text(text)
             .font(.caption.monospaced())
             .foregroundStyle(baseColor)
             .textSelection(.enabled)
