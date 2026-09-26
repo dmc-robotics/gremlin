@@ -74,6 +74,26 @@ struct SerialModelTests {
         #expect(model.connectionError == "Connection lost: Device not configured")
     }
 
+    @Test func reconnectAfterConnectionLoss() async throws {
+        let first = try connect()
+        first.continuation.yield(.disconnected(reason: "unplugged"))
+        #expect(await waitUntil { !model.isConnected })
+
+        model.connect()
+        let second = try #require(connector.lastConnection)
+        #expect(second !== first)
+        #expect(model.isConnected)
+        second.receive("back")
+        #expect(await waitUntil { model.buffer.messages.last?.text == "back" })
+    }
+
+    @Test func refreshWhileConnectedKeepsSelection() throws {
+        _ = try connect()
+        ports.set(["/dev/cu.Bluetooth-Incoming-Port"])
+        model.refreshPorts()
+        #expect(model.selectedPort == "/dev/cu.usbmodem1")
+    }
+
     @Test func sendAppendsNewline() async throws {
         let connection = try connect()
         #expect(await model.send("LED:on"))
@@ -130,6 +150,15 @@ struct SerialModelTests {
 }
 
 struct PlotPointTests {
+    @Test func samplesWithTheSameTimestampHaveDistinctIDs() {
+        var buffer = SerialBuffer()
+        let t0 = Date(timeIntervalSince1970: 0)
+        buffer.append("a:1", at: t0)
+        buffer.append("a:2", at: t0)
+        let ids = PlotPoint.points(from: buffer).map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
+
     @Test func missingSamplesSplitSegments() {
         var buffer = SerialBuffer()
         let t0 = Date(timeIntervalSince1970: 0)

@@ -70,7 +70,8 @@ struct SerialLineParserTests {
 
     // MARK: Malformed input
 
-    @Test(arguments: [":25", "temp:", "1sensor:25", "temp:25,bad", "temp:hot", "température:25", "temp:٣"])
+    @Test(arguments: [":25", "temp:", "1sensor:25", "temp:25,bad", "temp:hot", "température:25", "temp:٣",
+                      "x:" + String(repeating: "9", count: 400)])
     func malformedIsLog(line: String) {
         #expect(SerialLineParser.parse(line).kind == .log)
     }

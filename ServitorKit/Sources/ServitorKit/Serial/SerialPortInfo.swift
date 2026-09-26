@@ -33,8 +33,8 @@ public struct SerialPortInfo: Identifiable, Hashable, Sendable {
     }
 
     /// USB vendor IDs of Arduino boards and common USB-serial chips
-    /// (Arduino, FTDI, WCH, Silicon Labs, Prolific, Microchip, SparkFun).
-    private static let arduinoVendorIDs: Set<Int> = [0x2341, 0x0403, 0x1A86, 0x10C4, 0x067B, 0x04D8, 0x1B4F]
+    /// (Arduino, FTDI, WCH, Silicon Labs, Prolific, Microchip, SparkFun, PJRC/Teensy).
+    private static let arduinoVendorIDs: Set<Int> = [0x2341, 0x0403, 0x1A86, 0x10C4, 0x067B, 0x04D8, 0x1B4F, 0x16C0]
     // Computed because Regex isn't Sendable; literals are compiled at build time, so this is cheap.
     private static var arduinoManufacturer: Regex<Substring> {
         /arduino|ftdi|silicon labs|wch|prolific|ch340|ch341|cp210/.ignoresCase()

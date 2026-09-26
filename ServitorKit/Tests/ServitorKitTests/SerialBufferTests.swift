@@ -70,6 +70,31 @@ struct SerialBufferTests {
         #expect(buffer.seriesValues["b"] == [5, nil])
     }
 
+    @Test func keepsTextAsReceived() {
+        var buffer = SerialBuffer()
+        #expect(buffer.append("  temp:5  ", at: t0).text == "  temp:5  ")
+        #expect(buffer.seriesValues["temp"] == [5])
+    }
+
+    @Test func limitsNumberOfSeries() {
+        var buffer = SerialBuffer()
+        for i in 0..<(SerialBuffer.maxSeries + 10) {
+            buffer.append("k\(i):1", at: t0)
+        }
+        #expect(buffer.seriesNames.count == SerialBuffer.maxSeries)
+        #expect(buffer.seriesValues.count == SerialBuffer.maxSeries)
+        #expect(buffer.timestamps.count == SerialBuffer.maxSeries + 10)
+    }
+
+    @Test func dropsSeriesThatScrollOut() {
+        var buffer = SerialBuffer(capacity: 2)
+        buffer.append("old:1", at: t0)
+        buffer.append("new:2", at: t0 + 1)
+        buffer.append("new:3", at: t0 + 2)
+        #expect(buffer.seriesNames == ["new"])
+        #expect(buffer.seriesValues["old"] == nil)
+    }
+
     @Test func clearResetsEverythingIncludingIDs() {
         var buffer = SerialBuffer(capacity: 7)
         buffer.append("a:1", at: t0)

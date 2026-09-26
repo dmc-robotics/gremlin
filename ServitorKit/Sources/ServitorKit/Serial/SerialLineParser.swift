@@ -54,7 +54,8 @@ public enum SerialLineParser {
         if trimmed.wholeMatch(of: dataPattern) != nil {
             let values = trimmed.split(separator: ",").compactMap { pair -> SerialValue? in
                 let parts = pair.split(separator: ":", maxSplits: 1)
-                guard parts.count == 2, let number = Double(parts[1]) else { return nil }
+                // A huge number like x:1e999 parses to infinity, which can't be plotted
+                guard parts.count == 2, let number = Double(parts[1]), number.isFinite else { return nil }
                 return SerialValue(name: String(parts[0]), value: number)
             }
             if !values.isEmpty {

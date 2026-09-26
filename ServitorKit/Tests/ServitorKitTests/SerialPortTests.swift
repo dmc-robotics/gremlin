@@ -9,7 +9,8 @@ struct SerialPortInfoTests {
         SerialPortInfo(path: "/dev/cu.debug", manufacturer: "Silicon Labs"),
         SerialPortInfo(path: "/dev/cu.debug", manufacturer: "wch.cn"),
         SerialPortInfo(path: "/dev/cu.usbmodem14101"),
-        SerialPortInfo(path: "/dev/cu.usbserial-110")
+        SerialPortInfo(path: "/dev/cu.usbserial-110"),
+        SerialPortInfo(path: "/dev/cu.debug", vendorID: 0x16C0)
     ])
     func likelyArduino(port: SerialPortInfo) {
         #expect(port.isLikelyArduino)
@@ -126,6 +127,39 @@ final class SerialConnectionTests {
         connection.close()
         connection.close()
         #expect(await nextEvent(connection) == nil)
+    }
+
+    @Test func readsBurstsLargerThanOneChunk() async throws {
+        let connection = try SerialConnection(path: slavePath, baudRate: 115_200)
+        defer { connection.close() }
+
+        let lines = (1...800).map { "line \($0) padding padding" }
+        let payload = lines.joined(separator: "\n") + "\n"
+        // Write from another thread: the pty buffer is smaller than the payload
+        let master = self.master
+        Thread.detachNewThread {
+            _ = payload.withCString { Darwin.write(master, $0, strlen($0)) }
+        }
+
+        var received: [String] = []
+        while received.count < lines.count, let event = await nextEvent(connection) {
+            received += self.lines(event)
+        }
+        #expect(received == lines)
+    }
+
+    @Test func stalledWriteTimesOutWithoutBlockingReads() async throws {
+        let connection = try SerialConnection(path: slavePath, baudRate: 115_200)
+        defer { connection.close() }
+
+        // Nobody reads the master side, so the pty's buffer fills and the write stalls
+        let bigWrite = Task { try await connection.write(String(repeating: "x", count: 200_000)) }
+        try await Task.sleep(for: .milliseconds(200))
+
+        sendFromDevice("still reading\n")
+        #expect(lines(await nextEvent(connection)) == ["still reading"])
+
+        await #expect(throws: SerialError.self) { try await bigWrite.value }
     }
 
     @Test func openingMissingDeviceFails() {

@@ -32,6 +32,8 @@ struct SerialPlotterView: View {
 }
 
 struct PlotPoint: Identifiable, Equatable {
+    /// Index of the sample in the buffer; unique within a series even if timestamps repeat
+    let sample: Int
     let series: String
     /// Unique per unbroken run of a series; a missing sample starts a new segment so
     /// the line has a gap instead of bridging it.
@@ -39,7 +41,7 @@ struct PlotPoint: Identifiable, Equatable {
     let elapsed: Double
     let value: Double
 
-    var id: String { "\(segment)@\(elapsed)" }
+    var id: String { "\(series)#\(sample)" }
 
     static func points(from buffer: SerialBuffer) -> [PlotPoint] {
         guard let start = buffer.timestamps.first else { return [] }
@@ -54,6 +56,7 @@ struct PlotPoint: Identifiable, Equatable {
                     continue
                 }
                 points.append(PlotPoint(
+                    sample: index,
                     series: name,
                     segment: "\(name)#\(segmentIndex)",
                     elapsed: elapsed[index],

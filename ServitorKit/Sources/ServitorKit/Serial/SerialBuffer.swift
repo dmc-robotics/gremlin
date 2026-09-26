@@ -15,6 +15,8 @@ public struct SerialMessage: Identifiable, Hashable, Sendable {
 /// Every series has one entry per timestamp; `nil` marks a sample where that key was absent.
 public struct SerialBuffer: Sendable {
     public static let defaultCapacity = 500
+    /// Keys beyond this are ignored, so a device sending ever-new keys can't grow memory without limit
+    public static let maxSeries = 32
 
     public let capacity: Int
     public private(set) var messages: [SerialMessage] = []
@@ -30,6 +32,7 @@ public struct SerialBuffer: Sendable {
 
     public var hasPlotData: Bool { !seriesNames.isEmpty && !timestamps.isEmpty }
 
+    /// - Parameter text: the line as received; parsing ignores surrounding whitespace
     @discardableResult
     public mutating func append(_ text: String, at timestamp: Date) -> SerialMessage {
         let parsed = SerialLineParser.parse(text)
@@ -63,12 +66,13 @@ public struct SerialBuffer: Sendable {
 
         var sample: [String: Double] = [:]
         for value in values {
-            sample[value.name] = value.value
             if seriesValues[value.name] == nil {
+                guard seriesNames.count < Self.maxSeries else { continue }
                 // New key: backfill gaps for earlier samples
                 seriesNames.append(value.name)
                 seriesValues[value.name] = Array(repeating: nil, count: timestamps.count - 1)
             }
+            sample[value.name] = value.value
         }
         for name in seriesNames {
             seriesValues[name, default: []].append(sample[name])
@@ -80,6 +84,11 @@ public struct SerialBuffer: Sendable {
             for name in seriesNames {
                 seriesValues[name]?.removeFirst(overflow)
             }
+            // Drop keys that no longer appear in any retained sample
+            for name in seriesNames where seriesValues[name]?.allSatisfy({ $0 == nil }) ?? true {
+                seriesValues[name] = nil
+            }
+            seriesNames.removeAll { seriesValues[$0] == nil }
         }
     }
 }

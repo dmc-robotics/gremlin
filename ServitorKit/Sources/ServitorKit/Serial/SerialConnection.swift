@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import Synchronization
 
-/// A line received from the device, whitespace-trimmed.
+/// A line received from the device, without its line ending.
 public struct SerialLine: Hashable, Sendable {
     public var timestamp: Date
     public var text: String
@@ -68,18 +68,23 @@ public final class SerialConnection: SerialConnectionProtocol {
     /// `_IO('t', 13)` from sys/ttycom.h: exclusive use, so a second opener gets EBUSY
     private static let TIOCEXCL: UInt = 0x2000_740D
     private static let readChunkSize = 4096
-    private static let writeTimeoutMilliseconds: Int32 = 2000
-    private static let newline = UInt8(ascii: "\n")
+    /// Chunks read per wake-up, so a very fast device can't keep the read queue busy forever
+    private static let maxChunksPerRead = 16
+    /// Longest a single write may wait for the device to accept data
+    private static let writeTimeout: TimeInterval = 2
 
     public let events: AsyncStream<SerialEvent>
 
     private let fd: Int32
-    private let queue: DispatchQueue
+    private let readQueue: DispatchQueue
+    /// Separate from reads, so a device that stops accepting data can't stall incoming lines.
+    /// The fd is closed on this queue, after any write in progress.
+    private let writeQueue: DispatchQueue
     private let continuation: AsyncStream<SerialEvent>.Continuation
     private let readSource: DispatchSourceRead
     private let isClosed = Mutex(false)
-    /// Bytes of an incomplete line. Only touched on `queue`.
-    nonisolated(unsafe) private var pending = [UInt8]()
+    /// Only touched on `readQueue`
+    nonisolated(unsafe) private var framer = LineFramer()
 
     public init(path: String, baudRate: Int) throws {
         // O_NONBLOCK so open doesn't wait for carrier detect, and so reads never block the queue
@@ -95,12 +100,15 @@ public final class SerialConnection: SerialConnectionProtocol {
         }
 
         self.fd = fd
-        queue = DispatchQueue(label: "SerialConnection \(path)")
+        readQueue = DispatchQueue(label: "SerialConnection.read \(path)")
+        writeQueue = DispatchQueue(label: "SerialConnection.write \(path)")
         (events, continuation) = AsyncStream.makeStream(of: SerialEvent.self)
-        readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: readQueue)
 
-        readSource.setEventHandler { [unowned self] in readAvailable() }
-        readSource.setCancelHandler { Darwin.close(fd) }
+        readSource.setEventHandler { [weak self] in self?.readAvailable() }
+        readSource.setCancelHandler { [writeQueue] in
+            writeQueue.async { Darwin.close(fd) }
+        }
         readSource.activate()
     }
 
@@ -111,7 +119,7 @@ public final class SerialConnection: SerialConnectionProtocol {
     public func write(_ text: String) async throws {
         let bytes = Array(text.utf8)
         try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, Error>) in
-            queue.async { [self] in
+            writeQueue.async { [self] in
                 result.resume(with: Result { try writeAll(bytes) })
             }
         }
@@ -132,12 +140,13 @@ public final class SerialConnection: SerialConnectionProtocol {
         }
     }
 
-    // MARK: - Reading (on `queue`)
+    // MARK: - Reading (on `readQueue`)
 
     private func readAvailable() {
         var buffer = [UInt8](repeating: 0, count: Self.readChunkSize)
         var received: [UInt8] = []
-        while true {
+        // Anything left after the last chunk triggers the read source again
+        for _ in 0..<Self.maxChunksPerRead {
             let count = buffer.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
             if count > 0 {
                 received.append(contentsOf: buffer[0..<count])
@@ -146,24 +155,12 @@ public final class SerialConnection: SerialConnectionProtocol {
             } else {
                 // 0 = end of file (device gone); < 0 = error such as ENXIO after unplug
                 let reason = count == 0 ? "Port closed" : Self.errnoDescription()
-                emit(frameLines(received))
+                emit(framer.append(received))
                 lost(reason)
                 return
             }
         }
-        emit(frameLines(received))
-    }
-
-    private func frameLines(_ bytes: [UInt8]) -> [SerialLine] {
-        pending.append(contentsOf: bytes)
-        guard let lastNewline = pending.lastIndex(of: Self.newline) else { return [] }
-
-        let now = Date.now
-        let lines = pending[..<lastNewline]
-            .split(separator: Self.newline, omittingEmptySubsequences: false)
-            .map { SerialLine(timestamp: now, text: Self.decode($0)) }
-        pending.removeSubrange(...lastNewline)
-        return lines
+        emit(framer.append(received))
     }
 
     private func emit(_ lines: [SerialLine]) {
@@ -179,27 +176,26 @@ public final class SerialConnection: SerialConnectionProtocol {
         readSource.cancel()
     }
 
-    // MARK: - Writing (on `queue`)
+    // MARK: - Writing (on `writeQueue`)
 
     private func writeAll(_ bytes: [UInt8]) throws {
-        guard !isClosed.withLock({ $0 }) else { throw SerialError.closed }
+        let deadline = Date.now.addingTimeInterval(Self.writeTimeout)
         var offset = 0
         while offset < bytes.count {
+            guard !isClosed.withLock({ $0 }) else { throw SerialError.closed }
             let written = bytes[offset...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
             if written >= 0 {
                 offset += written
             } else if errno == EAGAIN {
-                // Output buffer full: wait until the port can take more
+                // Output buffer full: wait until the port can take more, up to the deadline
+                let remaining = Int32(deadline.timeIntervalSinceNow * 1000)
                 var pollDescriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                if poll(&pollDescriptor, 1, Self.writeTimeoutMilliseconds) <= 0 {
-                    throw SerialError.writeFailed("Timed out")
+                if remaining <= 0 || poll(&pollDescriptor, 1, remaining) <= 0 {
+                    throw SerialError.writeFailed("Timed out: the device isn't reading")
                 }
             } else if errno != EINTR {
                 throw SerialError.writeFailed(Self.errnoDescription())
             }
-        }
-        guard tcdrain(fd) == 0 else {
-            throw SerialError.writeFailed(Self.errnoDescription())
         }
     }
 
@@ -231,10 +227,6 @@ public final class SerialConnection: SerialConnectionProtocol {
             }
         }
         tcflush(fd, TCIOFLUSH)
-    }
-
-    private static func decode(_ bytes: ArraySlice<UInt8>) -> String {
-        String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func errnoDescription() -> String {
