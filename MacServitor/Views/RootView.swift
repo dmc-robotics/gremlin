@@ -62,7 +62,7 @@ struct ConnectionIndicator: View {
     var body: some View {
         let text = serial.connectedPort.map { "Serial connected to \($0)" } ?? "Serial not connected"
         Image(systemName: "circle.fill")
-            .font(.system(size: 10))
+            .font(.system(size: Layout.connectionDotSize))
             .foregroundStyle(serial.isConnected ? AnyShapeStyle(.green) : AnyShapeStyle(.tertiary))
             .help(text)
             .accessibilityLabel(text)

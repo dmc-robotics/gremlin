@@ -12,8 +12,6 @@ struct BottomPanelSplit<Content: View, Panel: View>: View {
 
     @State private var dragStartHeight: Double?
 
-    private static var handleHeight: CGFloat { 6 }
-
     var body: some View {
         GeometryReader { geometry in
             let maxPanelHeight = max(minPanelHeight, geometry.size.height - minContentHeight)
@@ -22,7 +20,7 @@ struct BottomPanelSplit<Content: View, Panel: View>: View {
             VStack(spacing: 0) {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                handle(maxPanelHeight: maxPanelHeight)
+                handle(currentHeight: height, maxPanelHeight: maxPanelHeight)
                 panel
                     .frame(maxWidth: .infinity)
                     .frame(height: height)
@@ -30,16 +28,18 @@ struct BottomPanelSplit<Content: View, Panel: View>: View {
         }
     }
 
-    private func handle(maxPanelHeight: CGFloat) -> some View {
+    /// Drags start from the height on screen, which can be less than the stored height
+    /// after the window shrinks
+    private func handle(currentHeight: CGFloat, maxPanelHeight: CGFloat) -> some View {
         Divider()
-            .frame(height: Self.handleHeight)
+            .frame(height: Layout.splitHandleHeight)
             .frame(maxWidth: .infinity)
             .contentShape(.rect)
             .pointerStyle(.frameResize(position: .top))
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = dragStartHeight ?? panelHeight
+                        let start = dragStartHeight ?? currentHeight
                         dragStartHeight = start
                         panelHeight = min(max(start - value.translation.height, minPanelHeight), maxPanelHeight)
                     }

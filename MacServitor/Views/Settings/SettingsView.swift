@@ -52,7 +52,7 @@ private struct AppPicker: View {
             HStack(spacing: 6) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: appPath))
                     .resizable()
-                    .frame(width: 16, height: 16)
+                    .frame(width: Layout.appIconSize, height: Layout.appIconSize)
                 Text(AppLauncher.displayName(ofAppAt: appPath))
                 Button("Choose…", action: choose)
             }

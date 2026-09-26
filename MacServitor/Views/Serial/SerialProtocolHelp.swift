@@ -62,7 +62,7 @@ struct SerialProtocolHelp: View {
             }
             .padding(20)
         }
-        .frame(width: 440, height: 520)
+        .frame(width: Layout.helpPopoverWidth, height: Layout.helpPopoverHeight)
     }
 
     private func section(_ title: String, _ text: String, code: String?) -> some View {

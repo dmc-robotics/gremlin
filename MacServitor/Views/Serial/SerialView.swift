@@ -35,7 +35,7 @@ struct SerialView: View {
             isPresented: Binding(get: { exportText != nil }, set: { if !$0 { exportText = nil } }),
             item: exportText ?? "",
             contentTypes: [.plainText],
-            defaultFilename: "serial-\(Date.now.formatted(.iso8601.dateSeparator(.dash).timeSeparator(.omitted))).txt"
+            defaultFilename: "serial-\(Date.now.fileNameTimestamp).txt"
         ) { _ in }
         .task {
             serial.refreshPorts()
@@ -159,10 +159,11 @@ struct SerialView: View {
 private struct SendField: View {
     @Environment(SerialModel.self) private var serial
     @State private var text = ""
+    @State private var isSending = false
     @FocusState private var isFocused: Bool
 
     private var canSend: Bool {
-        serial.isConnected && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        serial.isConnected && !isSending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -195,12 +196,16 @@ private struct SendField: View {
         }
     }
 
+    /// One send at a time, so pressing Return quickly can't send the same text twice
     private func send() {
         guard canSend else { return }
+        let sent = text
+        isSending = true
         Task {
-            if await serial.send(text) {
+            if await serial.send(sent), text == sent {
                 text = ""
             }
+            isSending = false
         }
     }
 }
