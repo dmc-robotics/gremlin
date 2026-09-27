@@ -27,8 +27,8 @@ Native macOS serial monitor/plotter and a project dashboard that builds and load
   - `Views/`: SwiftUI views per page
   - `Support/`: AppKit bridges (`AppLauncher`, ANSI → `AttributedString`)
   - `Constants.swift`: sizes, baud rates, preference keys. Use constants for magic numbers
-  - `Assets.xcassets/AppIcon.appiconset`: app icon, exported from `Design/Gremlin.pxd`. Use full-bleed square artwork; macOS 26 applies its own mask and frames pre-masked icons in a grey border
-- `Design/Gremlin.pxd`: Pixelmator Pro source for the app icon
+  - `Assets.xcassets/AppIcon.appiconset`: app icon, exported from `Design/Gremlin Logo.pxd`. Use full-bleed square artwork; macOS 26 applies its own mask and frames pre-masked icons in a grey border
+- `Design/Gremlin Logo.pxd`: Pixelmator Pro source for the app icon
 - `GremlinTests/`: model tests with fakes (`Fakes.swift`)
 
 ## Conventions

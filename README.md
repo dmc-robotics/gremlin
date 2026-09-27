@@ -42,10 +42,10 @@ xcodebuild -project Gremlin.xcodeproj -scheme Gremlin -derivedDataPath build tes
 
 ## App icon
 
-The icon's source is `Design/Gremlin.pxd` (Pixelmator Pro). To update it, export an `.icns`, then replace the PNGs in `Gremlin/Assets.xcassets/AppIcon.appiconset`:
+The icon's source is `Design/Gremlin Logo.pxd` (Pixelmator Pro). To update it, export an `.icns`, then replace the PNGs in `Gremlin/Assets.xcassets/AppIcon.appiconset`:
 
 ```zsh
-iconutil -c iconset Gremlin.icns -o /tmp/Gremlin.iconset
+iconutil -c iconset "Gremlin Logo.icns" -o /tmp/Gremlin.iconset
 cp /tmp/Gremlin.iconset/*.png Gremlin/Assets.xcassets/AppIcon.appiconset/
 ```
 
