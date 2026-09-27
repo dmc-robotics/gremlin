@@ -1,8 +1,8 @@
-# Generate MacServitor.xcodeproj with `xcodegen generate`. Edit this file, not the project.
-name: MacServitor
+# Generate Gremlin.xcodeproj with `xcodegen generate`. Edit this file, not the project.
+name: Gremlin
 
 options:
-  bundleIdPrefix: com.servitor
+  bundleIdPrefix: com.gremlin
   deploymentTarget:
     macOS: "26.0"
   createIntermediateGroups: true
@@ -19,23 +19,23 @@ settings:
     DEVELOPMENT_TEAM: ""
 
 packages:
-  ServitorKit:
-    path: ServitorKit
+  GremlinKit:
+    path: GremlinKit
 
 targets:
-  MacServitor:
+  Gremlin:
     type: application
     platform: macOS
     sources:
-      - MacServitor
+      - Gremlin
     dependencies:
-      - package: ServitorKit
+      - package: GremlinKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.servitor.mac
-        PRODUCT_NAME: MacServitor
+        PRODUCT_BUNDLE_IDENTIFIER: com.gremlin.mac
+        PRODUCT_NAME: Gremlin
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: MacServitor
+        INFOPLIST_KEY_CFBundleDisplayName: Gremlin
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
@@ -43,25 +43,25 @@ targets:
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
 
-  MacServitorTests:
+  GremlinTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - MacServitorTests
+      - GremlinTests
     dependencies:
-      - target: MacServitor
-      - package: ServitorKit
+      - target: Gremlin
+      - package: GremlinKit
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.servitor.mac.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.gremlin.mac.tests
 
 schemes:
-  MacServitor:
+  Gremlin:
     build:
       targets:
-        MacServitor: all
-        MacServitorTests: [test]
+        Gremlin: all
+        GremlinTests: [test]
     test:
       targets:
-        - MacServitorTests
+        - GremlinTests
