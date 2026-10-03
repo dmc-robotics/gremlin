@@ -2,6 +2,8 @@
 
 A native macOS serial monitor, plotter and Arduino project dashboard. It builds and loads sketches with `grot`.
 
+<img src="docs/screenshot.png" alt="Gremlin's Projects page" width="800">
+
 ## Features
 
 - **Projects**: add Arduino project directories and see board, core, port and baud from `.grotconfig`. Status badges show config validity (`grot validate`), whether the sketch exists and whether the port is connected. Build and Load run grot, and the output panel shows the colored results. Clicking the Port badge finds your Arduino and updates `.grotconfig`. Changes made to files on disk appear automatically.
